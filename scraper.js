@@ -4,7 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 async function iniciarScraper() {
-    console.log('--- Operação Dismatal: Mira Laser no Login ---');
+    console.log('--- Operação Dismatal: Preenchimento do Modal ---');
 
     const { browser, page } = await connect({
         args: ["--start-maximized", "--no-sandbox"],
@@ -20,81 +20,54 @@ async function iniciarScraper() {
         console.log('Passo 1: Carregando Home...');
         await page.goto('https://b2b.dismatal.com.br/', { waitUntil: 'networkidle2', timeout: 60000 });
         await new Promise(res => setTimeout(res, 8000));
-        await page.screenshot({ path: '01-home-estatica.png' });
 
-        console.log('Passo 2: Tentando disparar o Pop-up...');
-
-        // 🚩 ESTRATÉGIA DE CLIQUE TRIPLA
+        console.log('Passo 2: Disparando o Pop-up...');
         await page.evaluate(() => {
-            // 1. Procura o link que contém o texto de login
-            const links = [...document.querySelectorAll('a')];
-            const btnLogin = links.find(a => a.innerText.includes('faça seu login'));
-            
-            if (btnLogin) {
-                console.log('Botão encontrado. Disparando clique via JS...');
-                btnLogin.click(); // Clique 1: Programático
-                
-                // Clique 2: Disparando evento de mouse manual no centro do botão
-                const rect = btnLogin.getBoundingClientRect();
-                const evt = new MouseEvent('click', {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: rect.left + rect.width / 2,
-                    clientY: rect.top + rect.height / 2
-                });
-                btnLogin.dispatchEvent(evt);
+            const btn = [...document.querySelectorAll('a, span, div')].find(el => el.innerText.includes('faça seu login'));
+            if (btn) btn.click();
+        });
+
+        // 🚩 NOVIDADE: Aguarda o modal estar visível no DOM
+        console.log('Aguardando campos de login ficarem clicáveis...');
+        await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+        await new Promise(res => setTimeout(res, 3000)); // Delay de segurança para animação do modal
+        await page.screenshot({ path: '01-modal-aberto.png' });
+
+        console.log('Passo 3: Digitando credenciais...');
+
+        // 🚩 TÉCNICA DE FOCO: Clicamos no campo antes de digitar para "acordar" o formulário
+        const inputs = await page.$$('input');
+        for (let input of inputs) {
+            const type = await (await input.getProperty('type')).jsonValue();
+            const isVisible = await input.boundingBox();
+
+            if (isVisible) {
+                if (type === 'text' || type === 'email') {
+                    console.log('Preenchendo Usuário...');
+                    await input.click({ clickCount: 3 });
+                    await input.type(process.env.DISMATAL_USER, { delay: 150 });
+                } else if (type === 'password') {
+                    console.log('Preenchendo Senha...');
+                    await input.click();
+                    await input.type(process.env.DISMATAL_PASS, { delay: 150 });
+                }
             }
-        });
-
-        // Clique 3: Clique físico do Puppeteer nas coordenadas
-        const coords = await page.evaluate(() => {
-            const el = [...document.querySelectorAll('a')].find(a => a.innerText.includes('faça seu login'));
-            if (!el) return null;
-            const r = el.getBoundingClientRect();
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-        });
-
-        if (coords) {
-            await page.mouse.click(coords.x, coords.y);
-            console.log(`Clique físico executado em: ${coords.x}, ${coords.y}`);
         }
 
-        console.log('Aguardando 10 segundos pelo Modal...');
-        await new Promise(res => setTimeout(res, 10000));
-        await page.screenshot({ path: '02-pos-clique-total.png' });
-
-        // Passo 3: Preenchimento (Mesmo que o modal pareça invisível no print)
-        console.log('Buscando inputs de login na página inteira...');
+        await page.screenshot({ path: '02-dados-digitados.png' });
         
-        // Verifica se o campo de senha apareceu em algum lugar do código
-        const inputsEncontrados = await page.evaluate((u, p) => {
-            const campos = [...document.querySelectorAll('input')];
-            const userField = campos.find(i => i.type === 'text' || i.type === 'email' || i.name.includes('login'));
-            const passField = campos.find(i => i.type === 'password');
-            
-            if (userField && passField) {
-                userField.value = u;
-                passField.value = p;
-                userField.dispatchEvent(new Event('input', { bubbles: true }));
-                passField.dispatchEvent(new Event('input', { bubbles: true }));
-                return true;
-            }
-            return false;
-        }, process.env.DISMATAL_USER, process.env.DISMATAL_PASS);
+        // Pressiona Enter e aguarda a transição de página
+        console.log('Enviando Login...');
+        await Promise.all([
+            page.keyboard.press('Enter'),
+            page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => console.log('Timeout na navegação, seguindo...'))
+        ]);
 
-        if (inputsEncontrados) {
-            console.log('✅ Inputs localizados e preenchidos via Injeção JS!');
-            await page.screenshot({ path: '03-dados-preenchidos.png' });
-            await page.keyboard.press('Enter');
-            await new Promise(res => setTimeout(res, 15000));
-        } else {
-            console.log('❌ Modal não abriu ou inputs não foram localizados.');
-            process.exit(1);
-        }
+        await new Promise(res => setTimeout(res, 10000));
+        await page.screenshot({ path: '03-pos-login.png' });
 
-        // Navegação final
-        console.log('Passo 4: Verificando produto...');
+        // Passo 4: Verificação do Produto
+        console.log('Passo 4: Verificando SKU 1135574...');
         await page.goto('https://b2b.dismatal.com.br/produtos/1135574', { waitUntil: 'networkidle2' });
         await new Promise(res => setTimeout(res, 10000));
         await page.screenshot({ path: '04-resultado-final.png' });
@@ -106,7 +79,7 @@ async function iniciarScraper() {
 
         if (preco) {
             const valor = parseFloat(preco.replace(/[^\d,]/g, '').replace(',', '.'));
-            console.log(`✅ SUCESSO! Preço: R$ ${valor}`);
+            console.log(`✅ SUCESSO! R$ ${valor}`);
             await supabase.from('precos_dismatal').insert({
                 sku: '1135574',
                 nome_produto: 'Disjuntor Dismatal',
@@ -114,13 +87,13 @@ async function iniciarScraper() {
                 url: 'https://b2b.dismatal.com.br/produtos/1135574'
             });
         } else {
-            console.log('❌ Logado, mas preço não apareceu.');
+            console.log('❌ Login provavelmente falhou ou preço não carregou.');
             process.exit(1);
         }
 
     } catch (err) {
         console.error('ERRO:', err.message);
-        await page.screenshot({ path: 'ERRO-GERAL.png' });
+        await page.screenshot({ path: 'ERRO-MODAL.png' });
         process.exit(1);
     } finally {
         await browser.close();
