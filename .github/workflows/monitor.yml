@@ -1,1 +1,33 @@
+name: Kore E-com - Dismatal
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 10,16 * * *' # 2x ao dia
+
+jobs:
+  run-dismatal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: |
+          npm install puppeteer puppeteer-real-browser @supabase/supabase-js
+          sudo apt-get update && sudo apt-get install -y xvfb
+          npx playwright install-deps chromium
+
+      - name: Run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISMATAL_USER: ${{ secrets.DISMATAL_USER }}
+          DISMATAL_PASS: ${{ secrets.DISMATAL_PASS }}
+          USER_AGENT_REAL: ${{ secrets.USER_AGENT_REAL }}
+        run: xvfb-run --auto-servernum node scraper.js
