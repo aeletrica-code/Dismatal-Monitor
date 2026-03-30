@@ -4,7 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 async function iniciarScraper() {
-    console.log('--- Operação Dismatal: Coleta Avançada (Preço + Nome + Estoque) ---');
+    console.log('--- Kore E-com: Operação Dismatal Avançada ---');
 
     const { browser, page } = await connect({
         args: ["--start-maximized", "--no-sandbox"],
@@ -17,107 +17,127 @@ async function iniciarScraper() {
         await page.setUserAgent(process.env.USER_AGENT_REAL);
         await page.setViewport({ width: 1366, height: 768 });
 
-        // 1. LOGIN (Usando a técnica que funcionou)
-        console.log('Passo 1: Autenticando...');
-        await page.goto('https://b2b.dismatal.com.br/', { waitUntil: 'networkidle2', timeout: 60000 });
-        await new Promise(res => setTimeout(res, 10000));
+        // PASSO 1: Carregamento e Verificação de Login
+        console.log('Passo 1: Acessando Home...');
+        await page.goto('https://b2b.dismatal.com.br/', { waitUntil: 'networkidle2', timeout: 90000 });
+        await new Promise(res => setTimeout(res, 15000)); // Tempo extra para o site "acordar" no servidor
 
-        await page.evaluate(() => {
-            const btn = [...document.querySelectorAll('span, a, div')].find(el => el.innerText.includes('faça seu login'));
-            if (btn) {
-                const el = btn.closest('a') || btn;
-                ['mouseenter', 'mousedown', 'mouseup', 'click'].forEach(t => {
-                    el.dispatchEvent(new MouseEvent(t, { bubbles: true, buttons: 1 }));
-                });
-            }
+        // Verifica se já não estamos logados (sessão persistente)
+        const estaLogado = await page.evaluate(() => {
+            const texto = document.body.innerText;
+            return texto.includes('Sair') || texto.includes('Minha Conta') || !texto.includes('faça seu login');
         });
 
-        await new Promise(res => setTimeout(res, 8000));
+        if (!estaLogado) {
+            console.log('Passo 2: Tentando abrir o Login (Simulação Humana)...');
+            
+            const loginEl = await page.evaluateHandle(() => {
+                const itens = [...document.querySelectorAll('a, span, div')];
+                const alvo = itens.find(el => el.innerText.includes('faça seu login'));
+                return alvo ? (alvo.closest('a') || alvo) : null;
+            });
 
-        // Injeção de dados via frames ou página principal
-        const frames = page.frames();
-        let loginContext = page;
-        for (const f of frames) {
-            if (await f.$('input[type="password"]')) { loginContext = f; break; }
-        }
-
-        const preencheu = await loginContext.evaluate((u, p) => {
-            const inputs = [...document.querySelectorAll('input')];
-            const user = inputs.find(i => i.type === 'text' || i.name.includes('login'));
-            const pass = inputs.find(i => i.type === 'password');
-            if (user && pass) {
-                user.value = u; pass.value = p;
-                user.dispatchEvent(new Event('input', { bubbles: true }));
-                pass.dispatchEvent(new Event('input', { bubbles: true }));
-                return true;
+            if (loginEl) {
+                const box = await loginEl.boundingBox();
+                if (box) {
+                    // Move o mouse suavemente até o botão
+                    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 20 });
+                    await new Promise(res => setTimeout(res, 1000));
+                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                    console.log('Clique de login executado.');
+                }
             }
-            return false;
-        }, process.env.DISMATAL_USER, process.env.DISMATAL_PASS);
 
-        if (preencheu) {
-            await page.keyboard.press('Enter');
-            console.log('Login enviado. Aguardando 15s...');
-            await new Promise(res => setTimeout(res, 15000));
+            await new Promise(res => setTimeout(res, 12000));
+            await page.screenshot({ path: '01-pos-clique-login.png' });
+
+            // Identifica o contexto (Frame ou Página)
+            let alvoLogin = page;
+            const frames = page.frames();
+            for (const f of frames) {
+                if (await f.$('input[type="password"]')) { alvoLogin = f; break; }
+            }
+
+            console.log('Passo 3: Injetando dados de acesso...');
+            const sucessoLogin = await alvoLogin.evaluate((u, p) => {
+                const inputs = [...document.querySelectorAll('input')];
+                const user = inputs.find(i => i.type === 'text' || i.name.includes('login') || i.id.includes('login'));
+                const pass = inputs.find(i => i.type === 'password');
+                if (user && pass) {
+                    user.value = u; pass.value = p;
+                    user.dispatchEvent(new Event('input', { bubbles: true }));
+                    pass.dispatchEvent(new Event('input', { bubbles: true }));
+                    return true;
+                }
+                return false;
+            }, process.env.DISMATAL_USER, process.env.DISMATAL_PASS);
+
+            if (sucessoLogin) {
+                await page.keyboard.press('Enter');
+                console.log('Dados enviados! Aguardando 20s para login completo...');
+                await new Promise(res => setTimeout(res, 20000));
+            } else {
+                console.log('⚠️ Campos de login não encontrados. Verifique 01-pos-clique-login.png');
+            }
+        } else {
+            console.log('Sessão já ativa. Pulando login...');
         }
 
-        // 2. EXTRAÇÃO DE DADOS
-        const urlAlvo = 'https://b2b.dismatal.com.br/produtos/1135574';
-        console.log('Passo 2: Extraindo dados do produto...');
-        await page.goto(urlAlvo, { waitUntil: 'networkidle2' });
-        await new Promise(res => setTimeout(res, 8000));
+        // PASSO 4: Coleta de Dados do Produto
+        const urlProduto = 'https://b2b.dismatal.com.br/produtos/1135574';
+        console.log(`Passo 4: Acessando produto...`);
+        await page.goto(urlProduto, { waitUntil: 'networkidle2' });
+        await new Promise(res => setTimeout(res, 10000));
+        await page.screenshot({ path: '02-pagina-produto.png' });
 
-        const dadosProduto = await page.evaluate(() => {
-            // A. Capturar Nome
+        const dados = await page.evaluate(() => {
+            // Nome
             const nome = document.querySelector('h1')?.innerText?.trim() || 
                          document.querySelector('.product-name')?.innerText?.trim() || 
-                         "Produto não identificado";
+                         document.title.split('|')[0].trim();
 
-            // B. Capturar Menor Preço (Promoção)
+            // Preço (Pega todos e escolhe o MENOR - Promoção)
             const matches = [...document.body.innerText.matchAll(/R\$\s?([0-9.,]+)/g)];
-            const precosDisponiveis = matches.map(m => {
+            const precos = matches.map(m => {
                 return parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
             }).filter(n => n > 0);
-            
-            const menorPreco = precosDisponiveis.length > 0 ? Math.min(...precosDisponiveis) : null;
+            const menorPreco = precos.length > 0 ? Math.min(...precos) : null;
 
-            // C. Capturar Estoque
+            // Estoque (Busca por palavras-chave ou números)
             const texto = document.body.innerText.toLowerCase();
-            let statusEstoque = "Não identificado";
+            let estoque = "Indisponível";
+            const matchQtd = texto.match(/(\d+)\s*(unidade|unid|un)/);
             
-            // Busca por padrões numéricos ou texto
-            const matchEstoque = texto.match(/(\d+)\s*(unidade|unid|un)/);
-            if (matchEstoque) {
-                statusEstoque = `${matchEstoque[1]} unidades`;
+            if (matchQtd) {
+                estoque = `${matchQtd[1]} unidades`;
             } else if (texto.includes('em estoque') || texto.includes('disponível')) {
-                statusEstoque = "Disponível";
-            } else if (texto.includes('esgotado') || texto.includes('indisponível')) {
-                statusEstoque = "Esgotado";
+                estoque = "Em Estoque";
             }
 
-            return { nome, preco: menorPreco, estoque: statusEstoque };
+            return { nome, preco: menorPreco, estoque };
         });
 
-        // 3. SALVAR NO SUPABASE
-        if (dadosProduto.preco) {
-            console.log(`✅ RESULTADO: ${dadosProduto.nome} | R$ ${dadosProduto.preco} | ${dadosProduto.estoque}`);
+        if (dados.preco) {
+            console.log(`✅ SUCESSO! ${dados.nome} | R$ ${dados.preco} | ${dados.estoque}`);
             
             const { error } = await supabase.from('precos_dismatal').insert({
                 sku: '1135574',
-                nome_produto: dadosProduto.nome,
-                preco: dadosProduto.preco,
-                estoque: dadosProduto.estoque,
-                url: urlAlvo
+                nome_produto: dados.nome,
+                preco: dados.preco,
+                estoque: dados.estoque,
+                url: urlProduto
             });
 
             if (error) throw error;
-            console.log('Dados salvos com sucesso no Supabase!');
+            console.log('Dados salvos no Supabase.');
         } else {
-            console.log('❌ Falha ao encontrar o preço na página final.');
-            await page.screenshot({ path: 'erro-captura-final.png', fullPage: true });
+            console.log('❌ Falha ao extrair dados. O preço não foi localizado.');
+            process.exit(1);
         }
 
     } catch (err) {
         console.error('ERRO CRÍTICO:', err.message);
+        await page.screenshot({ path: 'ERRO-FINAL.png', fullPage: true });
         process.exit(1);
     } finally {
         await browser.close();
