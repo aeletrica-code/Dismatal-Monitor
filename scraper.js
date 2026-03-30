@@ -4,7 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 async function iniciarScraper() {
-    console.log('--- Kore E-com: Operação Dismatal Avançada ---');
+    console.log('--- Kore E-com: Operação Dismatal (Resiliência Total) ---');
 
     const { browser, page } = await connect({
         args: ["--start-maximized", "--no-sandbox"],
@@ -17,127 +17,120 @@ async function iniciarScraper() {
         await page.setUserAgent(process.env.USER_AGENT_REAL);
         await page.setViewport({ width: 1366, height: 768 });
 
-        // PASSO 1: Carregamento e Verificação de Login
-        console.log('Passo 1: Acessando Home...');
+        // 1. ACESSO E CLIQUE
+        console.log('Passo 1: Acessando Home e disparando Login...');
         await page.goto('https://b2b.dismatal.com.br/', { waitUntil: 'networkidle2', timeout: 90000 });
-        await new Promise(res => setTimeout(res, 15000)); // Tempo extra para o site "acordar" no servidor
+        await new Promise(res => setTimeout(res, 10000));
 
-        // Verifica se já não estamos logados (sessão persistente)
-        const estaLogado = await page.evaluate(() => {
-            const texto = document.body.innerText;
-            return texto.includes('Sair') || texto.includes('Minha Conta') || !texto.includes('faça seu login');
+        await page.evaluate(() => {
+            const btn = [...document.querySelectorAll('a, span, div')].find(el => el.innerText.includes('faça seu login'));
+            if (btn) {
+                const el = btn.closest('a') || btn;
+                el.click(); // Clique programático
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            }
         });
 
-        if (!estaLogado) {
-            console.log('Passo 2: Tentando abrir o Login (Simulação Humana)...');
-            
-            const loginEl = await page.evaluateHandle(() => {
-                const itens = [...document.querySelectorAll('a, span, div')];
-                const alvo = itens.find(el => el.innerText.includes('faça seu login'));
-                return alvo ? (alvo.closest('a') || alvo) : null;
-            });
+        // Espera agressiva pelo modal/iframe
+        console.log('Aguardando 15s pela estabilização do modal...');
+        await new Promise(res => setTimeout(res, 15000));
+        await page.screenshot({ path: '01-modal-debug.png' });
 
-            if (loginEl) {
-                const box = await loginEl.boundingBox();
-                if (box) {
-                    // Move o mouse suavemente até o botão
-                    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 20 });
-                    await new Promise(res => setTimeout(res, 1000));
-                    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                    console.log('Clique de login executado.');
-                }
+        // 2. INFILTRAÇÃO NO LOGIN
+        let contextoLogin = null;
+        
+        // Tenta achar em frames primeiro (mais provável no B2B)
+        const frames = page.frames();
+        for (const f of frames) {
+            const input = await f.$('input[type="password"]');
+            if (input) {
+                contextoLogin = f;
+                console.log('✅ Frame de login identificado!');
+                break;
             }
+        }
 
-            await new Promise(res => setTimeout(res, 12000));
-            await page.screenshot({ path: '01-pos-clique-login.png' });
+        // Se não achou em frames, tenta na página principal
+        if (!contextoLogin) {
+            const inputPagina = await page.$('input[type="password"]');
+            if (inputPagina) contextoLogin = page;
+        }
 
-            // Identifica o contexto (Frame ou Página)
-            let alvoLogin = page;
-            const frames = page.frames();
-            for (const f of frames) {
-                if (await f.$('input[type="password"]')) { alvoLogin = f; break; }
-            }
-
-            console.log('Passo 3: Injetando dados de acesso...');
-            const sucessoLogin = await alvoLogin.evaluate((u, p) => {
-                const inputs = [...document.querySelectorAll('input')];
-                const user = inputs.find(i => i.type === 'text' || i.name.includes('login') || i.id.includes('login'));
-                const pass = inputs.find(i => i.type === 'password');
+        if (contextoLogin) {
+            console.log('Injetando credenciais...');
+            await contextoLogin.evaluate((u, p) => {
+                const campos = [...document.querySelectorAll('input')];
+                const user = campos.find(i => i.type === 'text' || i.name.includes('login') || i.id.includes('login'));
+                const pass = campos.find(i => i.type === 'password');
                 if (user && pass) {
                     user.value = u; pass.value = p;
                     user.dispatchEvent(new Event('input', { bubbles: true }));
-                    pass.dispatchEvent(new Event('input', { bubbles: true }));
-                    return true;
+                    pass.dispatchEvent(new Event('change', { bubbles: true }));
                 }
-                return false;
             }, process.env.DISMATAL_USER, process.env.DISMATAL_PASS);
 
-            if (sucessoLogin) {
-                await page.keyboard.press('Enter');
-                console.log('Dados enviados! Aguardando 20s para login completo...');
-                await new Promise(res => setTimeout(res, 20000));
-            } else {
-                console.log('⚠️ Campos de login não encontrados. Verifique 01-pos-clique-login.png');
-            }
+            await page.keyboard.press('Enter');
+            console.log('Login enviado. Aguardando processamento...');
+            await new Promise(res => setTimeout(res, 20000));
         } else {
-            console.log('Sessão já ativa. Pulando login...');
+            console.log('⚠️ Aviso: Modal não detectado. Tentando seguir assim mesmo...');
         }
 
-        // PASSO 4: Coleta de Dados do Produto
-        const urlProduto = 'https://b2b.dismatal.com.br/produtos/1135574';
-        console.log(`Passo 4: Acessando produto...`);
-        await page.goto(urlProduto, { waitUntil: 'networkidle2' });
+        // 3. COLETA DE DADOS (PREÇO PROMO + ESTOQUE + NOME)
+        const urlAlvo = 'https://b2b.dismatal.com.br/produtos/1135574';
+        console.log('Passo 2: Extraindo dados do SKU 1135574...');
+        await page.goto(urlAlvo, { waitUntil: 'networkidle2' });
         await new Promise(res => setTimeout(res, 10000));
-        await page.screenshot({ path: '02-pagina-produto.png' });
+        await page.screenshot({ path: '02-produto-final.png' });
 
         const dados = await page.evaluate(() => {
-            // Nome
-            const nome = document.querySelector('h1')?.innerText?.trim() || 
-                         document.querySelector('.product-name')?.innerText?.trim() || 
-                         document.title.split('|')[0].trim();
-
-            // Preço (Pega todos e escolhe o MENOR - Promoção)
+            const h1 = document.querySelector('h1')?.innerText?.trim() || document.title;
+            
+            // Lógica do Menor Preço (Sniper)
             const matches = [...document.body.innerText.matchAll(/R\$\s?([0-9.,]+)/g)];
             const precos = matches.map(m => {
                 return parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
             }).filter(n => n > 0);
-            const menorPreco = precos.length > 0 ? Math.min(...precos) : null;
-
-            // Estoque (Busca por palavras-chave ou números)
-            const texto = document.body.innerText.toLowerCase();
-            let estoque = "Indisponível";
-            const matchQtd = texto.match(/(\d+)\s*(unidade|unid|un)/);
             
-            if (matchQtd) {
-                estoque = `${matchQtd[1]} unidades`;
+            const precoPromocional = precos.length > 0 ? Math.min(...precos) : null;
+
+            // Lógica de Estoque
+            const texto = document.body.innerText.toLowerCase();
+            let estoqueStatus = "Esgotado/Não achado";
+            const matchNum = texto.match(/(\d+)\s*(unidade|unid|un)/);
+            
+            if (matchNum) {
+                estoqueStatus = `${matchNum[1]} unidades`;
             } else if (texto.includes('em estoque') || texto.includes('disponível')) {
-                estoque = "Em Estoque";
+                estoqueStatus = "Disponível";
             }
 
-            return { nome, preco: menorPreco, estoque };
+            return { nome: h1, preco: precoPromocional, estoque: estoqueStatus };
         });
 
+        // 4. PERSISTÊNCIA NO SUPABASE
         if (dados.preco) {
-            console.log(`✅ SUCESSO! ${dados.nome} | R$ ${dados.preco} | ${dados.estoque}`);
+            console.log(`🚀 SUCESSO: ${dados.nome} | R$ ${dados.preco} | Estoque: ${dados.estoque}`);
             
             const { error } = await supabase.from('precos_dismatal').insert({
                 sku: '1135574',
                 nome_produto: dados.nome,
                 preco: dados.preco,
                 estoque: dados.estoque,
-                url: urlProduto
+                url: urlAlvo
             });
 
             if (error) throw error;
-            console.log('Dados salvos no Supabase.');
+            console.log('Dados salvos com sucesso!');
         } else {
-            console.log('❌ Falha ao extrair dados. O preço não foi localizado.');
+            console.log('❌ Erro: O preço promocional não foi encontrado.');
             process.exit(1);
         }
 
     } catch (err) {
         console.error('ERRO CRÍTICO:', err.message);
-        await page.screenshot({ path: 'ERRO-FINAL.png', fullPage: true });
+        await page.screenshot({ path: 'ERRO-OPERACAO.png', fullPage: true });
         process.exit(1);
     } finally {
         await browser.close();
