@@ -26,21 +26,17 @@ jobs:
 
       - name: Executar Coleta
         env:
-          # Segredos do Supabase
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }} # USE A SERVICE_ROLE AQUI
-          
-          # Segredos Dismatal
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           DISMATAL_USER: ${{ secrets.DISMATAL_USER }}
           DISMATAL_PASS: ${{ secrets.DISMATAL_PASS }}
-          
-          # Disfarce
           USER_AGENT_REAL: ${{ secrets.USER_AGENT_REAL }}
         run: xvfb-run --auto-servernum node scraper.js
 
-      - name: Salvar Prints para Debug
-        if: always()
+      - name: Salvar Prints (Mesmo em Erro)
+        if: always() # 🚩 IMPORTANTE: Salva mesmo se falhar
         uses: actions/upload-artifact@v4
         with:
           name: debug-dismatal
           path: "*.png"
+          retention-days: 1
