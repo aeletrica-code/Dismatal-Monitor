@@ -50,3 +50,52 @@ async function iniciarScraper() {
         // Passo 3: Extração do Preço e Nome
         const data = await page.evaluate(() => {
             const body = document.body.innerText;
+            const logado = !body.includes('Entrar') && !body.includes('Cadastrar');
+            
+            // Regex para capturar R$ 00,00
+            const precoMatch = body.match(/R\$\s?([0-9.,]+)/);
+            const nomeProduto = document.querySelector('h1')?.innerText || "Produto Dismatal";
+
+            return {
+                isLogado: logado,
+                precoTexto: precoMatch ? precoMatch[1] : null,
+                nome: nomeProduto.trim()
+            };
+        });
+
+        console.log(`Status de Login: ${data.isLogado} | Preço Encontrado: ${data.precoTexto}`);
+
+        if (data.precoTexto && data.isLogado) {
+            // Limpa o valor (remove ponto de milhar e troca vírgula por ponto)
+            const valorFinal = parseFloat(data.precoTexto.replace(/\./g, '').replace(',', '.'));
+            
+            console.log(`✅ SUCESSO! R$ ${valorFinal} pronto para o Supabase.`);
+
+            // Inserção na tabela específica da Dismatal
+            const { error } = await supabase.from('precos_dismatal').insert({
+                sku: skuAlvo,
+                nome_produto: data.nome,
+                preco: valorFinal,
+                url: urlProduto
+            });
+
+            if (error) {
+                console.error('❌ Erro no Supabase:', error.message);
+                process.exit(1);
+            }
+            console.log('Dados registrados com sucesso!');
+        } else {
+            console.log('❌ Falha: Robô deslogado ou preço não carregou no HTML.');
+            await page.screenshot({ path: 'erro-coleta.png', fullPage: true });
+            process.exit(1);
+        }
+
+    } catch (err) {
+        console.error('FALHA GERAL:', err.message);
+        process.exit(1);
+    } finally {
+        await browser.close();
+    }
+}
+
+iniciarScraper();
