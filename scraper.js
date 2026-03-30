@@ -4,7 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 async function iniciarScraper() {
-    console.log('--- Operação Dismatal: Blizzard de Eventos no Login ---');
+    console.log('--- Operação Dismatal: Coleta Avançada (Preço + Nome + Estoque) ---');
 
     const { browser, page } = await connect({
         args: ["--start-maximized", "--no-sandbox"],
@@ -17,131 +17,107 @@ async function iniciarScraper() {
         await page.setUserAgent(process.env.USER_AGENT_REAL);
         await page.setViewport({ width: 1366, height: 768 });
 
-        console.log('Passo 1: Carregando Home e aguardando "Hidratação"...');
+        // 1. LOGIN (Usando a técnica que funcionou)
+        console.log('Passo 1: Autenticando...');
         await page.goto('https://b2b.dismatal.com.br/', { waitUntil: 'networkidle2', timeout: 60000 });
-        
-        // Espera 10 segundos para o JavaScript do site carregar completamente
         await new Promise(res => setTimeout(res, 10000));
-        await page.screenshot({ path: '01-home-carregada.png' });
-
-        console.log('Passo 2: Disparando Blizzard de Eventos no botão de login...');
 
         await page.evaluate(() => {
-            const spans = [...document.querySelectorAll('span, a, div')];
-            const alvo = spans.find(el => el.innerText.includes('Olá, faça seu login'));
-            
-            if (alvo) {
-                const el = alvo.closest('a') || alvo;
-                
-                // Dispara uma sequência completa de eventos reais
-                ['mouseenter', 'mouseover', 'mousedown', 'mouseup', 'click'].forEach(evtType => {
-                    const evt = new MouseEvent(evtType, {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true,
-                        buttons: 1
-                    });
-                    el.dispatchEvent(evt);
+            const btn = [...document.querySelectorAll('span, a, div')].find(el => el.innerText.includes('faça seu login'));
+            if (btn) {
+                const el = btn.closest('a') || btn;
+                ['mouseenter', 'mousedown', 'mouseup', 'click'].forEach(t => {
+                    el.dispatchEvent(new MouseEvent(t, { bubbles: true, buttons: 1 }));
                 });
-                console.log('Eventos disparados via JS.');
             }
         });
 
-        // Clique físico adicional para garantir
-        const box = await page.evaluate(() => {
-            const el = [...document.querySelectorAll('span, a')].find(e => e.innerText.includes('faça seu login'));
-            if (!el) return null;
-            const r = el.getBoundingClientRect();
-            return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-        });
+        await new Promise(res => setTimeout(res, 8000));
 
-        if (box) {
-            await page.mouse.move(box.x, box.y);
-            await page.mouse.down();
-            await new Promise(res => setTimeout(res, 100));
-            await page.mouse.up();
+        // Injeção de dados via frames ou página principal
+        const frames = page.frames();
+        let loginContext = page;
+        for (const f of frames) {
+            if (await f.$('input[type="password"]')) { loginContext = f; break; }
         }
 
-        console.log('Aguardando 10 segundos pelo Modal...');
-        await new Promise(res => setTimeout(res, 10000));
-        await page.screenshot({ path: '02-tentativa-modal.png' });
-
-        // 🚩 O PLANO B: Se o modal não abrir, tentamos a URL de login pura (não o modal)
-        const modalAberto = await page.$('input[type="password"]');
-        if (!modalAberto) {
-            console.log('⚠️ Modal não abriu. Tentando URL de login alternativa...');
-            await page.goto('https://b2b.dismatal.com.br/login', { waitUntil: 'networkidle2' }).catch(() => {});
-            await new Promise(res => setTimeout(res, 5000));
-        }
-
-        console.log('Passo 3: Buscando campos em frames e na página principal...');
-        
-        // Função para preencher onde quer que o campo de senha esteja
-        const preencher = async (contexto) => {
-            const senha = await contexto.$('input[type="password"]');
-            if (senha) {
-                const inputs = await contexto.$$('input');
-                for (let input of inputs) {
-                    const type = await (await input.getProperty('type')).jsonValue();
-                    if (type === 'text' || type === 'email' || type === 'number') {
-                        await input.type(process.env.DISMATAL_USER, { delay: 100 });
-                    } else if (type === 'password') {
-                        await input.type(process.env.DISMATAL_PASS, { delay: 100 });
-                    }
-                }
+        const preencheu = await loginContext.evaluate((u, p) => {
+            const inputs = [...document.querySelectorAll('input')];
+            const user = inputs.find(i => i.type === 'text' || i.name.includes('login'));
+            const pass = inputs.find(i => i.type === 'password');
+            if (user && pass) {
+                user.value = u; pass.value = p;
+                user.dispatchEvent(new Event('input', { bubbles: true }));
+                pass.dispatchEvent(new Event('input', { bubbles: true }));
                 return true;
             }
             return false;
-        };
+        }, process.env.DISMATAL_USER, process.env.DISMATAL_PASS);
 
-        // Procura na página principal e em todos os frames
-        let sucessoPreenchimento = await preencher(page);
-        if (!sucessoPreenchimento) {
-            for (const frame of page.frames()) {
-                if (await preencher(frame)) {
-                    sucessoPreenchimento = true;
-                    break;
-                }
-            }
-        }
-
-        if (sucessoPreenchimento) {
-            console.log('✅ Dados inseridos!');
-            await page.screenshot({ path: '03-dados-prontos.png' });
+        if (preencheu) {
             await page.keyboard.press('Enter');
+            console.log('Login enviado. Aguardando 15s...');
             await new Promise(res => setTimeout(res, 15000));
-        } else {
-            throw new Error('Não foi possível localizar os campos de login em lugar nenhum.');
         }
 
-        // Finalização
-        console.log('Verificando preço no produto final...');
-        await page.goto('https://b2b.dismatal.com.br/produtos/1135574', { waitUntil: 'networkidle2' });
-        await new Promise(res => setTimeout(res, 10000));
-        
-        const resultado = await page.evaluate(() => {
-            const m = document.body.innerText.match(/R\$\s?([0-9.,]+)/);
-            return m ? m[0] : null;
+        // 2. EXTRAÇÃO DE DADOS
+        const urlAlvo = 'https://b2b.dismatal.com.br/produtos/1135574';
+        console.log('Passo 2: Extraindo dados do produto...');
+        await page.goto(urlAlvo, { waitUntil: 'networkidle2' });
+        await new Promise(res => setTimeout(res, 8000));
+
+        const dadosProduto = await page.evaluate(() => {
+            // A. Capturar Nome
+            const nome = document.querySelector('h1')?.innerText?.trim() || 
+                         document.querySelector('.product-name')?.innerText?.trim() || 
+                         "Produto não identificado";
+
+            // B. Capturar Menor Preço (Promoção)
+            const matches = [...document.body.innerText.matchAll(/R\$\s?([0-9.,]+)/g)];
+            const precosDisponiveis = matches.map(m => {
+                return parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+            }).filter(n => n > 0);
+            
+            const menorPreco = precosDisponiveis.length > 0 ? Math.min(...precosDisponiveis) : null;
+
+            // C. Capturar Estoque
+            const texto = document.body.innerText.toLowerCase();
+            let statusEstoque = "Não identificado";
+            
+            // Busca por padrões numéricos ou texto
+            const matchEstoque = texto.match(/(\d+)\s*(unidade|unid|un)/);
+            if (matchEstoque) {
+                statusEstoque = `${matchEstoque[1]} unidades`;
+            } else if (texto.includes('em estoque') || texto.includes('disponível')) {
+                statusEstoque = "Disponível";
+            } else if (texto.includes('esgotado') || texto.includes('indisponível')) {
+                statusEstoque = "Esgotado";
+            }
+
+            return { nome, preco: menorPreco, estoque: statusEstoque };
         });
 
-        if (resultado) {
-            const v = parseFloat(resultado.replace(/[^\d,]/g, '').replace(',', '.'));
-            console.log(`✅ SUCESSO! R$ ${v}`);
-            await supabase.from('precos_dismatal').insert({
+        // 3. SALVAR NO SUPABASE
+        if (dadosProduto.preco) {
+            console.log(`✅ RESULTADO: ${dadosProduto.nome} | R$ ${dadosProduto.preco} | ${dadosProduto.estoque}`);
+            
+            const { error } = await supabase.from('precos_dismatal').insert({
                 sku: '1135574',
-                nome_produto: 'Disjuntor Dismatal',
-                preco: v,
-                url: 'https://b2b.dismatal.com.br/produtos/1135574'
+                nome_produto: dadosProduto.nome,
+                preco: dadosProduto.preco,
+                estoque: dadosProduto.estoque,
+                url: urlAlvo
             });
+
+            if (error) throw error;
+            console.log('Dados salvos com sucesso no Supabase!');
         } else {
-            console.log('❌ Login falhou ou preço não carregou.');
-            await page.screenshot({ path: '04-erro-final.png', fullPage: true });
-            process.exit(1);
+            console.log('❌ Falha ao encontrar o preço na página final.');
+            await page.screenshot({ path: 'erro-captura-final.png', fullPage: true });
         }
 
     } catch (err) {
-        console.error('ERRO:', err.message);
-        await page.screenshot({ path: 'ERRO-CRITICO.png' });
+        console.error('ERRO CRÍTICO:', err.message);
         process.exit(1);
     } finally {
         await browser.close();
