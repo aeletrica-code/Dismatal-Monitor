@@ -1,33 +1,46 @@
-name: Kore E-com - Dismatal
+name: Kore E-com - Operação Dismatal
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Permite rodar manualmente
   schedule:
-    - cron: '0 10,16 * * *' # 2x ao dia
+    - cron: '0 10,16 * * *' # Roda às 10h e 16h
 
 jobs:
-  run-dismatal:
+  run-scraper:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Código
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install
+      - name: Instalar Dependências
         run: |
           npm install puppeteer puppeteer-real-browser @supabase/supabase-js
-          sudo apt-get update && sudo apt-get install -y xvfb
+          sudo apt-get update
+          sudo apt-get install -y xvfb
           npx playwright install-deps chromium
 
-      - name: Run
+      - name: Executar Coleta
         env:
+          # Segredos do Supabase
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }} # USE A SERVICE_ROLE AQUI
+          
+          # Segredos Dismatal
           DISMATAL_USER: ${{ secrets.DISMATAL_USER }}
           DISMATAL_PASS: ${{ secrets.DISMATAL_PASS }}
+          
+          # Disfarce
           USER_AGENT_REAL: ${{ secrets.USER_AGENT_REAL }}
         run: xvfb-run --auto-servernum node scraper.js
+
+      - name: Salvar Prints para Debug
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-dismatal
+          path: "*.png"
